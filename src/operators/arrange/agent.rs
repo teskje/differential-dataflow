@@ -1,27 +1,26 @@
 //! Shared read access to a trace.
 
-use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::{Rc, Weak};
 
-use timely::dataflow::Scope;
 use timely::dataflow::operators::generic::source;
-use timely::progress::Timestamp;
-use timely::progress::{Antichain, frontier::AntichainRef};
 use timely::dataflow::operators::CapabilitySet;
+use timely::dataflow::Scope;
+use timely::progress::Timestamp;
+use timely::progress::{frontier::AntichainRef, Antichain};
 
 use lattice::Lattice;
-use trace::{Trace, TraceReader, Batch, BatchReader, Cursor};
+use trace::{Batch, BatchReader, Cursor, Trace, TraceReader};
 
 use trace::wrappers::rc::TraceBox;
 
 use timely::scheduling::Activator;
 
-use super::{TraceWriter, TraceAgentQueueWriter, TraceAgentQueueReader, Arranged};
 use super::TraceReplayInstruction;
+use super::{Arranged, TraceAgentQueueReader, TraceAgentQueueWriter, TraceWriter};
 
-use crate::trace::wrappers::frontier::{TraceFrontier, BatchFrontier};
-
+use crate::trace::wrappers::frontier::{BatchFrontier, TraceFrontier};
 
 /// A `TraceReader` wrapper which can be imported into other dataflows.
 ///
@@ -30,7 +29,7 @@ use crate::trace::wrappers::frontier::{TraceFrontier, BatchFrontier};
 pub struct TraceAgent<Tr>
 where
     Tr: TraceReader,
-    Tr::Time: Lattice+Ord+Clone+'static,
+    Tr::Time: Lattice + Ord + Clone + 'static,
 {
     trace: Rc<RefCell<TraceBox<Tr>>>,
     queues: Weak<RefCell<Vec<TraceAgentQueueWriter<Tr>>>>,
@@ -45,7 +44,7 @@ where
 impl<Tr> TraceReader for TraceAgent<Tr>
 where
     Tr: TraceReader,
-    Tr::Time: Lattice+Ord+Clone+'static,
+    Tr::Time: Lattice + Ord + Clone + 'static,
 {
     type Key = Tr::Key;
     type Val = Tr::Val;
@@ -58,8 +57,15 @@ where
     fn set_logical_compaction(&mut self, frontier: AntichainRef<Tr::Time>) {
         // This method does not enforce that `frontier` is greater or equal to `self.logical_compaction`.
         // Instead, it determines the joint consequences of both guarantees and moves forward with that.
-        crate::lattice::antichain_join_into(&self.logical_compaction.borrow()[..], &frontier[..], &mut self.temp_antichain);
-        self.trace.borrow_mut().adjust_logical_compaction(self.logical_compaction.borrow(), self.temp_antichain.borrow());
+        crate::lattice::antichain_join_into(
+            &self.logical_compaction.borrow()[..],
+            &frontier[..],
+            &mut self.temp_antichain,
+        );
+        self.trace.borrow_mut().adjust_logical_compaction(
+            self.logical_compaction.borrow(),
+            self.temp_antichain.borrow(),
+        );
         ::std::mem::swap(&mut self.logical_compaction, &mut self.temp_antichain);
         self.temp_antichain.clear();
     }
@@ -69,27 +75,43 @@ where
     fn set_physical_compaction(&mut self, frontier: AntichainRef<Tr::Time>) {
         // This method does not enforce that `frontier` is greater or equal to `self.physical_compaction`.
         // Instead, it determines the joint consequences of both guarantees and moves forward with that.
-        crate::lattice::antichain_join_into(&self.physical_compaction.borrow()[..], &frontier[..], &mut self.temp_antichain);
-        self.trace.borrow_mut().adjust_physical_compaction(self.physical_compaction.borrow(), self.temp_antichain.borrow());
+        crate::lattice::antichain_join_into(
+            &self.physical_compaction.borrow()[..],
+            &frontier[..],
+            &mut self.temp_antichain,
+        );
+        self.trace.borrow_mut().adjust_physical_compaction(
+            self.physical_compaction.borrow(),
+            self.temp_antichain.borrow(),
+        );
         ::std::mem::swap(&mut self.physical_compaction, &mut self.temp_antichain);
         self.temp_antichain.clear();
     }
     fn get_physical_compaction(&mut self) -> AntichainRef<Tr::Time> {
         self.physical_compaction.borrow()
     }
-    fn cursor_through(&mut self, frontier: AntichainRef<Tr::Time>) -> Option<(Tr::Cursor, <Tr::Cursor as Cursor>::Storage)> {
+    fn cursor_through(
+        &mut self,
+        frontier: AntichainRef<Tr::Time>,
+    ) -> Option<(Tr::Cursor, <Tr::Cursor as Cursor>::Storage)> {
         self.trace.borrow_mut().trace.cursor_through(frontier)
     }
-    fn map_batches<F: FnMut(&Self::Batch)>(&self, f: F) { self.trace.borrow().trace.map_batches(f) }
+    fn map_batches<F: FnMut(&Self::Batch)>(&self, f: F) {
+        self.trace.borrow().trace.map_batches(f)
+    }
 }
 
 impl<Tr> TraceAgent<Tr>
 where
     Tr: TraceReader,
-    Tr::Time: Timestamp+Lattice,
+    Tr::Time: Timestamp + Lattice,
 {
     /// Creates a new agent from a trace reader.
-    pub fn new(trace: Tr, operator: ::timely::dataflow::operators::generic::OperatorInfo, logging: Option<::logging::Logger>) -> (Self, TraceWriter<Tr>)
+    pub fn new(
+        trace: Tr,
+        operator: ::timely::dataflow::operators::generic::OperatorInfo,
+        logging: Option<::logging::Logger>,
+    ) -> (Self, TraceWriter<Tr>)
     where
         Tr: Trace,
         Tr::Batch: Batch,
@@ -98,9 +120,10 @@ where
         let queues = Rc::new(RefCell::new(Vec::new()));
 
         if let Some(logging) = &logging {
-            logging.log(
-                ::logging::TraceShare { operator: operator.global_id, diff: 1 }
-            );
+            logging.log(::logging::TraceShare {
+                operator: operator.global_id,
+                diff: 1,
+            });
         }
 
         let reader = TraceAgent {
@@ -127,20 +150,19 @@ where
     /// The queue is first populated with existing batches from the trace,
     /// The queue will be immediately populated with existing historical batches from the trace, and until the reference
     /// is dropped the queue will receive new batches as produced by the source `arrange` operator.
-    pub fn new_listener(&mut self, activator: Activator) -> TraceAgentQueueReader<Tr>
-    {
+    pub fn new_listener(&mut self, activator: Activator) -> TraceAgentQueueReader<Tr> {
         // create a new queue for progress and batch information.
         let mut new_queue = VecDeque::new();
 
         // add the existing batches from the trace
         let mut upper = None;
-        self.trace
-            .borrow_mut()
-            .trace
-            .map_batches(|batch| {
-                new_queue.push_back(TraceReplayInstruction::Batch(batch.clone(), Some(<Tr::Time as Timestamp>::minimum())));
-                upper = Some(batch.upper().clone());
-            });
+        self.trace.borrow_mut().trace.map_batches(|batch| {
+            new_queue.push_back(TraceReplayInstruction::Batch(
+                batch.clone(),
+                Some(<Tr::Time as Timestamp>::minimum()),
+            ));
+            upper = Some(batch.upper().clone());
+        });
 
         if let Some(upper) = upper {
             new_queue.push_back(TraceReplayInstruction::Frontier(upper));
@@ -159,8 +181,8 @@ where
 
 impl<Tr> TraceAgent<Tr>
 where
-    Tr: TraceReader+'static,
-    Tr::Time: Lattice+Ord+Clone+'static,
+    Tr: TraceReader + 'static,
+    Tr::Time: Lattice + Ord + Clone + 'static,
 {
     /// Copies an existing collection into the supplied scope.
     ///
@@ -221,7 +243,7 @@ where
     /// ```
     pub fn import<G>(&mut self, scope: &G) -> Arranged<G, TraceAgent<Tr>>
     where
-        G: Scope<Timestamp=Tr::Time>,
+        G: Scope<Timestamp = Tr::Time>,
         Tr::Time: Timestamp,
     {
         self.import_named(scope, "ArrangedSource")
@@ -230,7 +252,7 @@ where
     /// Same as `import`, but allows to name the source.
     pub fn import_named<G>(&mut self, scope: &G, name: &str) -> Arranged<G, TraceAgent<Tr>>
     where
-        G: Scope<Timestamp=Tr::Time>,
+        G: Scope<Timestamp = Tr::Time>,
         Tr::Time: Timestamp,
     {
         // Drop ShutdownButton and return only the arrangement.
@@ -292,9 +314,16 @@ where
     ///     }).unwrap();
     /// }
     /// ```
-    pub fn import_core<G>(&mut self, scope: &G, name: &str) -> (Arranged<G, TraceAgent<Tr>>, ShutdownButton<CapabilitySet<Tr::Time>>)
+    pub fn import_core<G>(
+        &mut self,
+        scope: &G,
+        name: &str,
+    ) -> (
+        Arranged<G, TraceAgent<Tr>>,
+        ShutdownButton<CapabilitySet<Tr::Time>>,
+    )
     where
-        G: Scope<Timestamp=Tr::Time>,
+        G: Scope<Timestamp = Tr::Time>,
         Tr::Time: Timestamp,
     {
         let trace = self.clone();
@@ -302,10 +331,8 @@ where
         let mut shutdown_button = None;
 
         let stream = {
-
             let shutdown_button_ref = &mut shutdown_button;
             source(scope, name, move |capability, info| {
-
                 let capabilities = Rc::new(RefCell::new(Some(CapabilitySet::new())));
 
                 let activator = scope.activator_for(&info.address[..]);
@@ -314,19 +341,21 @@ where
                 let activator = scope.activator_for(&info.address[..]);
                 *shutdown_button_ref = Some(ShutdownButton::new(capabilities.clone(), activator));
 
-                capabilities.borrow_mut().as_mut().unwrap().insert(capability);
+                capabilities
+                    .borrow_mut()
+                    .as_mut()
+                    .unwrap()
+                    .insert(capability);
 
                 move |output| {
-
                     let mut capabilities = capabilities.borrow_mut();
                     if let Some(ref mut capabilities) = *capabilities {
-
                         let mut borrow = queue.1.borrow_mut();
                         for instruction in borrow.drain(..) {
                             match instruction {
                                 TraceReplayInstruction::Frontier(frontier) => {
                                     capabilities.downgrade(&frontier.borrow()[..]);
-                                },
+                                }
                                 TraceReplayInstruction::Batch(batch, hint) => {
                                     if let Some(time) = hint {
                                         if !batch.is_empty() {
@@ -416,10 +445,17 @@ where
     ///     }).unwrap();
     /// }
     /// ```
-    pub fn import_frontier<G>(&mut self, scope: &G, name: &str) -> (Arranged<G, TraceFrontier<TraceAgent<Tr>>>, ShutdownButton<CapabilitySet<Tr::Time>>)
+    pub fn import_frontier<G>(
+        &mut self,
+        scope: &G,
+        name: &str,
+    ) -> (
+        Arranged<G, TraceFrontier<TraceAgent<Tr>>>,
+        ShutdownButton<CapabilitySet<Tr::Time>>,
+    )
     where
-        G: Scope<Timestamp=Tr::Time>,
-        Tr::Time: Timestamp+ Lattice+Ord+Clone+'static,
+        G: Scope<Timestamp = Tr::Time>,
+        Tr::Time: Timestamp + Lattice + Ord + Clone + 'static,
         Tr: TraceReader,
     {
         // This frontier describes our only guarantee on the compaction frontier.
@@ -428,10 +464,18 @@ where
     }
 
     /// Import a trace advanced to a specific frontier.
-    pub fn import_frontier_core<G>(&mut self, scope: &G, name: &str, frontier: Antichain<Tr::Time>) -> (Arranged<G, TraceFrontier<TraceAgent<Tr>>>, ShutdownButton<CapabilitySet<Tr::Time>>)
+    pub fn import_frontier_core<G>(
+        &mut self,
+        scope: &G,
+        name: &str,
+        frontier: Antichain<Tr::Time>,
+    ) -> (
+        Arranged<G, TraceFrontier<TraceAgent<Tr>>>,
+        ShutdownButton<CapabilitySet<Tr::Time>>,
+    )
     where
-        G: Scope<Timestamp=Tr::Time>,
-        Tr::Time: Timestamp+ Lattice+Ord+Clone+'static,
+        G: Scope<Timestamp = Tr::Time>,
+        Tr::Time: Timestamp + Lattice + Ord + Clone + 'static,
         Tr: TraceReader,
     {
         let trace = self.clone();
@@ -440,11 +484,11 @@ where
         let mut shutdown_button = None;
 
         let stream = {
-
             let shutdown_button_ref = &mut shutdown_button;
             source(scope, name, move |capability, info| {
-
-                let capabilities = Rc::new(RefCell::new(Some(CapabilitySet::new())));
+                let mut capabilities = CapabilitySet::from_elem(capability);
+                capabilities.downgrade(&frontier.borrow());
+                let capabilities = Rc::new(RefCell::new(Some(capabilities)));
 
                 let activator = scope.activator_for(&info.address[..]);
                 let queue = self.new_listener(activator);
@@ -452,24 +496,28 @@ where
                 let activator = scope.activator_for(&info.address[..]);
                 *shutdown_button_ref = Some(ShutdownButton::new(capabilities.clone(), activator));
 
-                capabilities.borrow_mut().as_mut().unwrap().insert(capability);
+                let name = name.to_string();
 
                 move |output| {
-
                     let mut capabilities = capabilities.borrow_mut();
                     if let Some(ref mut capabilities) = *capabilities {
-
                         let mut borrow = queue.1.borrow_mut();
                         for instruction in borrow.drain(..) {
                             match instruction {
                                 TraceReplayInstruction::Frontier(frontier) => {
+                                    println!("{name} instruction: Frontier({frontier:?})");
+                                    println!("{name} capabilities: {capabilities:?}, frontier: {frontier:?})");
                                     capabilities.downgrade(&frontier.borrow()[..]);
-                                },
+                                    println!("{name} new capabilities: {capabilities:?}");
+                                }
                                 TraceReplayInstruction::Batch(batch, hint) => {
+                                    println!("{name} instruction: Batch({hint:?}, {})", batch.is_empty());
                                     if let Some(time) = hint {
                                         if !batch.is_empty() {
                                             let delayed = capabilities.delayed(&time);
-                                            output.session(&delayed).give(BatchFrontier::make_from(batch, frontier.borrow()));
+                                            output.session(&delayed).give(
+                                                BatchFrontier::make_from(batch, frontier.borrow()),
+                                            );
                                         }
                                     }
                                 }
@@ -484,8 +532,6 @@ where
     }
 }
 
-
-
 /// Wrapper than can drop shared references.
 pub struct ShutdownButton<T> {
     reference: Rc<RefCell<Option<T>>>,
@@ -495,7 +541,10 @@ pub struct ShutdownButton<T> {
 impl<T> ShutdownButton<T> {
     /// Creates a new ShutdownButton.
     pub fn new(reference: Rc<RefCell<Option<T>>>, activator: Activator) -> Self {
-        Self { reference, activator }
+        Self {
+            reference,
+            activator,
+        }
     }
     /// Push the shutdown button, dropping the shared objects.
     pub fn press(&mut self) {
@@ -504,9 +553,7 @@ impl<T> ShutdownButton<T> {
     }
     /// Hotwires the button to one that is pressed if dropped.
     pub fn press_on_drop(self) -> ShutdownDeadmans<T> {
-        ShutdownDeadmans {
-            button: self
-        }
+        ShutdownDeadmans { button: self }
     }
 }
 
@@ -526,20 +573,24 @@ impl<T> Drop for ShutdownDeadmans<T> {
 impl<Tr> Clone for TraceAgent<Tr>
 where
     Tr: TraceReader,
-    Tr::Time: Lattice+Ord+Clone+'static,
+    Tr::Time: Lattice + Ord + Clone + 'static,
 {
     fn clone(&self) -> Self {
-
         if let Some(logging) = &self.logging {
-            logging.log(
-                ::logging::TraceShare { operator: self.operator.global_id, diff: 1 }
-            );
+            logging.log(::logging::TraceShare {
+                operator: self.operator.global_id,
+                diff: 1,
+            });
         }
 
         // increase counts for wrapped `TraceBox`.
         let empty_frontier = Antichain::new();
-        self.trace.borrow_mut().adjust_logical_compaction(empty_frontier.borrow(), self.logical_compaction.borrow());
-        self.trace.borrow_mut().adjust_physical_compaction(empty_frontier.borrow(), self.physical_compaction.borrow());
+        self.trace
+            .borrow_mut()
+            .adjust_logical_compaction(empty_frontier.borrow(), self.logical_compaction.borrow());
+        self.trace
+            .borrow_mut()
+            .adjust_physical_compaction(empty_frontier.borrow(), self.physical_compaction.borrow());
 
         TraceAgent {
             trace: self.trace.clone(),
@@ -556,19 +607,23 @@ where
 impl<Tr> Drop for TraceAgent<Tr>
 where
     Tr: TraceReader,
-    Tr::Time: Lattice+Ord+Clone+'static,
+    Tr::Time: Lattice + Ord + Clone + 'static,
 {
     fn drop(&mut self) {
-
         if let Some(logging) = &self.logging {
-            logging.log(
-                ::logging::TraceShare { operator: self.operator.global_id, diff: -1 }
-            );
+            logging.log(::logging::TraceShare {
+                operator: self.operator.global_id,
+                diff: -1,
+            });
         }
 
         // decrement borrow counts to remove all holds
         let empty_frontier = Antichain::new();
-        self.trace.borrow_mut().adjust_logical_compaction(self.logical_compaction.borrow(), empty_frontier.borrow());
-        self.trace.borrow_mut().adjust_physical_compaction(self.physical_compaction.borrow(), empty_frontier.borrow());
+        self.trace
+            .borrow_mut()
+            .adjust_logical_compaction(self.logical_compaction.borrow(), empty_frontier.borrow());
+        self.trace
+            .borrow_mut()
+            .adjust_physical_compaction(self.physical_compaction.borrow(), empty_frontier.borrow());
     }
 }
