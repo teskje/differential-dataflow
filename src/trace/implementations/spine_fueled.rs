@@ -97,6 +97,7 @@ pub struct Spine<B: Batch> where B::Time: Lattice+Ord, B::R: Semigroup {
     upper: Antichain<B::Time>,
     effort: usize,
     activator: Option<timely::scheduling::activate::Activator>,
+    proportionality: u32,
 }
 
 impl<B> TraceReader for Spine<B>
@@ -258,8 +259,9 @@ where
         info: ::timely::dataflow::operators::generic::OperatorInfo,
         logging: Option<::logging::Logger>,
         activator: Option<timely::scheduling::activate::Activator>,
+        proportionality: u32,
     ) -> Self {
-        Self::with_effort(1, info, logging, activator)
+        Self::with_effort(1, info, logging, activator, proportionality)
     }
 
     /// Apply some amount of effort to trace maintenance.
@@ -397,13 +399,12 @@ where
     /// The `proportionality` is meant to ensure merge work happens when a non-trivial reduction
     /// may happen, but to avoid such an opinion when there is no possibility of such reduction.
     fn reduced(&self) -> bool {
-        let proportionality = 16;
         let mut non_empty = 0;
         for index in 0 .. self.merging.len() {
             if self.merging[index].is_double() { return false; }
             if self.merging[index].len() > 0 { 
                 if non_empty > 0 { return false; }
-                non_empty = proportionality; 
+                non_empty = self.proportionality; 
             }
             non_empty = non_empty / 2;
         }
@@ -435,10 +436,13 @@ where
         operator: OperatorInfo,
         logger: Option<::logging::Logger>,
         activator: Option<timely::scheduling::activate::Activator>,
+        proportionality: u32,
     ) -> Self {
 
         // Zero effort is .. not smart.
         if effort == 0 { effort = 1; }
+
+        println!("creating spine with proportionality={proportionality}");
 
         Spine {
             operator,
@@ -450,6 +454,7 @@ where
             upper: Antichain::from_elem(<B::Time as timely::progress::Timestamp>::minimum()),
             effort,
             activator,
+            proportionality,
         }
     }
 

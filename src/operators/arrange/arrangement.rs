@@ -570,8 +570,9 @@ where
                 else {
                     (None, None)
                 };
+                let proportionality = self.inner.scope().config().get::<u32>("differential/proportionality").copied().unwrap_or(16);
 
-                let empty_trace = Tr::new(info.clone(), logger.clone(), activator);
+                let empty_trace = Tr::new(info.clone(), logger.clone(), activator, proportionality);
                 let (reader_local, mut writer) = TraceAgent::new(empty_trace, info, logger);
 
                 *reader = Some(reader_local);

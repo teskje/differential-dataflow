@@ -360,8 +360,9 @@ where
                 else {
                     (None, None)
                 };
+                let proportionality = self.stream.scope().config().get::<u32>("differential/proportionality").copied().unwrap_or(16);
 
-                let empty = T2::new(operator_info.clone(), logger.clone(), activator);
+                let empty = T2::new(operator_info.clone(), logger.clone(), activator, proportionality);
                 let mut source_trace = self.trace.clone();
 
                 let (mut output_reader, mut output_writer) = TraceAgent::new(empty, operator_info, logger);

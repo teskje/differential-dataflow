@@ -206,6 +206,7 @@ where <Self as TraceReader>::Batch: Batch {
         info: ::timely::dataflow::operators::generic::OperatorInfo,
         logging: Option<::logging::Logger>,
         activator: Option<timely::scheduling::activate::Activator>,
+        proportionality: u32,
     ) -> Self;
 
     ///    Exert merge effort, even without updates.

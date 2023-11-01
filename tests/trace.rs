@@ -17,7 +17,7 @@ type IntegerTrace = OrdValSpine<u64, u64, usize, i64>;
 
 fn get_trace() -> Spine<Rc<OrdValBatch<u64, u64, usize, i64>>> {
     let op_info = OperatorInfo::new(0, 0, &[]);
-    let mut trace = IntegerTrace::new(op_info, None, None);
+    let mut trace = IntegerTrace::new(op_info, None, None, 16);
     {
         let mut batcher = <<IntegerTrace as TraceReader>::Batch as Batch>::Batcher::new();
 

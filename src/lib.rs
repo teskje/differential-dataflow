@@ -125,7 +125,9 @@ pub struct Config {
     /// cause these operators to reschedule themselves as long as their arrangemnt has not
     /// reached a compact representation, and each scheduling quantum they will perform
     /// compaction work as if `effort` records had been added to the arrangement.
-    pub idle_merge_effort: Option<isize>
+    pub idle_merge_effort: Option<isize>,
+    /// ...
+    pub proportionality: Option<u32>,
 }
 
 impl Config {
@@ -140,5 +142,8 @@ impl Config {
 pub fn configure(config: &mut timely::WorkerConfig, options: &Config) {
     if let Some(effort) = options.idle_merge_effort {
         config.set("differential/idle_merge_effort".to_string(), effort);
+    }
+    if let Some(prop) = options.proportionality {
+        config.set("differential/proportionality".to_string(), prop);
     }
 }

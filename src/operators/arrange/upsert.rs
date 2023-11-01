@@ -173,12 +173,13 @@ where
             else {
                 (None, None)
             };
+            let proportionality = stream.scope().config().get::<u32>("differential/proportionality").copied().unwrap_or(16);
 
             // Tracks the lower envelope of times in `priority_queue`.
             let mut capabilities = Antichain::<Capability<G::Timestamp>>::new();
             let mut buffer = Vec::new();
             // Form the trace we will both use internally and publish.
-            let empty_trace = Tr::new(info.clone(), logger.clone(), activator);
+            let empty_trace = Tr::new(info.clone(), logger.clone(), activator, proportionality);
             let (mut reader_local, mut writer) = TraceAgent::new(empty_trace, info, logger);
             // Capture the reader outside the builder scope.
             *reader = Some(reader_local.clone());
