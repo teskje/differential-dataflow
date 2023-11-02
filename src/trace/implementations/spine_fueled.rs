@@ -399,14 +399,21 @@ where
     /// The `proportionality` is meant to ensure merge work happens when a non-trivial reduction
     /// may happen, but to avoid such an opinion when there is no possibility of such reduction.
     fn reduced(&self) -> bool {
-        let mut non_empty = 0;
-        for index in 0 .. self.merging.len() {
-            if self.merging[index].is_double() { return false; }
-            if self.merging[index].len() > 0 { 
-                if non_empty > 0 { return false; }
-                non_empty = self.proportionality; 
+        for slot in &self.merging {
+            if slot.is_double() {
+                return false;
             }
-            non_empty = non_empty / 2;
+        }
+
+        let mut prop = self.proportionality;
+        for slot in self.merging.iter().rev().skip(1) {
+            prop /= 2;
+            if prop == 0 {
+                break;
+            }
+            if slot.len() > 0 {
+                return false;
+            }
         }
         true
     }
